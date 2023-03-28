@@ -65,7 +65,7 @@ def hcb_dynamics(V, meas_str, L, ms, chi, ancs, init_cond):
     assert (L % 2 == 0), f'L must be even, got {L}'
 
     assert (ancs == 1 or ancs == 2 or ancs == L), \
-        f'expected a number of ancillas of 1, 2 or L, got {ancs}'
+        f'expected a number of ancillas of 1, 2, L/2 or L, got {ancs}'
 
     assert (init_cond == 'init_gs' or init_cond == 'init_wall'), \
         f'expected initial condition init_gs or init_wall, got {init_cond}'
@@ -180,6 +180,11 @@ def hcb_dynamics(V, meas_str, L, ms, chi, ancs, init_cond):
     proj_hub_quench = ProjModel(model_params_quench)
 
     # parameters for dynamics (TDVP)
+
+    # Note that we set svd_min = 1.e-30, ensuring a rapid increase of the
+    # bond dimension. This causes the code to switch to the one-site TDVP
+    # algorithm relatively quickly and is needed for robustness.
+
     tdvp_params = {
         'start_time': 0,
         'trunc_params': {
@@ -206,6 +211,15 @@ def hcb_dynamics(V, meas_str, L, ms, chi, ancs, init_cond):
     measured = False
 
     print("method: \t time: \t entropy: \t chi: \t N:")
+    if init_cond == 'init_wall':
+        # We take an initial tiny step, this is to create some entanglement
+        # in the initial state before projection. This is needed for robustness
+        # in the case of the domain-wall initial condition; the reason is the
+        # presence of parts of the Hamiltonian only connected through nnn terms
+        tdvp_engine = tdvp.TwoSiteTDVPEngine(
+            psi=psi, model=proj_hub, options=tdvp_params)
+        tdvp_engine.run_evolution(N_steps=1, dt=1.e-3)
+
     for i in range(num_dts//num_tdvp_steps):
         tdvp_params['start_time'] = time[i*num_tdvp_steps] - delta_t
         psi.test_sanity()
