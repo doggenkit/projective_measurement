@@ -16,15 +16,47 @@ which are connected through interactions but not hopping.
 Note that everything is expressed in units where the unit of
 hopping t = 1 and hbar = 1.
 
+For more information about the physics of what's going on and the definition
+of the model, see:
+
+https://arxiv.org/abs/2303.07081
+
 Implementation by Elmer V. H. Doggen, based on the TeNPy code and examples.
 Tested for TeNPy version 0.10.0
-elmer.doggen@kit.edu
+elmer.doggen@kit.edu / evhdoggen@gmail.com
 
 TeNPy documentation:
 https://tenpy.readthedocs.io
 
+Brief installation instructions (see the aforementioned TeNPy documentation
+for further details):
+
+    1. Collect the code from git:
+
+    git clone https://github.com/tenpy/tenpy.git ./YOUR_TENPY_DIRECTORY/
+
+    2. From an empty conda environment, run:
+
+    conda install -c defaults python numpy scipy mkl-devel Cython
+
+    Note that this makes sure we use the Math Kernel Library (MKL).
+
+    3. Compile the code from the TeNPy directory:
+
+    ./compile.sh
+
+    Compilation is optional, but provides a significant speedup.
+    The following should yield no warnings:
+    import numpy, scipy, tenpy
+
+    You can check if your NumPy and TeNPy installation use MKL by:
+    numpy.show_config()
+    tenpy.show_config()
+
+    4. Run the code!
+
 Sample usage:
-hcb_dynamics(V=0.5, meas_str=5.0, L=20, ms=4, chi=256,
+hcb_dynamics(V=-0.25, meas_str=5.0, L=20, ms=4, chi=256,
              ancs=20, init_cond='init_gs')
 
     Arguments
@@ -50,6 +82,8 @@ hcb_dynamics(V=0.5, meas_str=5.0, L=20, ms=4, chi=256,
     ancs : the number of ancillas. Valid choices are 1, 2, L.
         1 : the ancilla is attached to the L/2'th site (1..L)
         2 : the ancillas are attached to the L/2'th and L/2+1'th sites
+        L//2 : there is an ancilla attached to every other site,
+               starting from the first site
         L : there is an ancilla attached to every site
 
     init_cond : determine the initial condition. Valid choices:
@@ -64,7 +98,7 @@ def hcb_dynamics(V, meas_str, L, ms, chi, ancs, init_cond):
 
     assert (L % 2 == 0), f'L must be even, got {L}'
 
-    assert (ancs == 1 or ancs == 2 or ancs == L), \
+    assert (ancs == 1 or ancs == 2 or ancs == L//2 or ancs == L), \
         f'expected a number of ancillas of 1, 2, L/2 or L, got {ancs}'
 
     assert (init_cond == 'init_gs' or init_cond == 'init_wall'), \
@@ -72,7 +106,11 @@ def hcb_dynamics(V, meas_str, L, ms, chi, ancs, init_cond):
 
     # define time window for dynamics
     delta_t = 0.05
-    num_dts = 4000
+    if ancs == L//2 or ancs == L:
+        # use a shorter time window for the many-ancilla case
+        num_dts = 1000
+    else:
+        num_dts = 4000
     num_tdvp_steps = 5
 
     # number of steps to keep measurement protocol fixed
@@ -100,10 +138,10 @@ def hcb_dynamics(V, meas_str, L, ms, chi, ancs, init_cond):
 
     model_params = {
         'L': Ltot,  # plus ancilla pairs
-        'conserve': 'N',
-        'n_max': 1,
+        'conserve': 'N',  # particle number conservation
+        'n_max': 1,  # hard-core bosons
         'lattice': 'Chain',
-        'bc_MPS': 'finite',
+        'bc_MPS': 'finite',  # open boundary conditions
         't': t,
         'tnn': tnn,
         'V': Vn,
@@ -114,7 +152,9 @@ def hcb_dynamics(V, meas_str, L, ms, chi, ancs, init_cond):
     proj_hub = ProjModel(model_params)
 
     if init_cond == 'init_gs':
-        # initialize the system in a half-filling product state
+        # before starting dynamics, initialize the system in the ground
+        # state of the uncoupled system
+        # first initialize the system in a half-filling product state
         product_state = ["1", "0"] * (Ltot//2)
 
         tnn_dmrg = copy.deepcopy(tnn)
@@ -201,12 +241,14 @@ def hcb_dynamics(V, meas_str, L, ms, chi, ancs, init_cond):
                     'trunc_cut': None
                     }}
 
-    # now perform dynamics using TDVP
+    # temporary data structures for saving data
     times = []
     S_mid = []
     S_all = []
     density = []
     max_chi = []
+
+    # dynamical flags
     one_site_switch = False
     measured = False
 
@@ -220,6 +262,7 @@ def hcb_dynamics(V, meas_str, L, ms, chi, ancs, init_cond):
             psi=psi, model=proj_hub, options=tdvp_params)
         tdvp_engine.run_evolution(N_steps=1, dt=1.e-3)
 
+    # now perform dynamics using TDVP
     for i in range(num_dts//num_tdvp_steps):
         tdvp_params['start_time'] = time[i*num_tdvp_steps] - delta_t
         psi.test_sanity()
@@ -242,6 +285,18 @@ def hcb_dynamics(V, meas_str, L, ms, chi, ancs, init_cond):
                     [model_params_quench['mu'], measured] = quench_func(
                         time[i*num_tdvp_steps], L//2 + 3*j,
                         psi, born_rule, Ltot)
+                    proj_hub_quench = ProjModel(model_params_quench)
+                    tdvp_engine_proj = tdvp.TwoSiteTDVPEngine(
+                        psi=psi, model=proj_hub_quench,
+                        options=tdvp_params_proj)
+                    tdvp_engine_proj.run_evolution(N_steps=10,
+                                                   dt=1e-7*1.j*delta_t)
+
+            if ancs == L//2:
+                for j in range(L//2):
+                    # measure the ancilla belonging to the j'th site
+                    [model_params_quench['mu'], measured] = quench_func(
+                        time[i*num_tdvp_steps], 4*j + 1, psi, born_rule, Ltot)
                     proj_hub_quench = ProjModel(model_params_quench)
                     tdvp_engine_proj = tdvp.TwoSiteTDVPEngine(
                         psi=psi, model=proj_hub_quench,
@@ -352,6 +407,25 @@ def determine_params(t, Vn, tnn, Vnn, L, ancs):
         Vn[L//2 + 2] = meas_str
         t[L//2 + 3] = -0.5  # hopping in ancilla pair
 
+    if ancs == L//2:  # ancillas at every other site
+        for i in range(L//2):
+            # hopping in main chain
+            tnn[4*i] = -0.5
+
+            # interaction in main chain
+            Vnn[4*i] = V
+
+            # hopping in ancilla pair
+            t[4*i + 1] = -0.5
+
+            # measurement strength
+            Vn[4*i] = meas_str
+
+        for i in range(L//2 - 1):
+            t[4*i + 3] = -0.5
+
+            Vn[4*i + 3] = V
+
     if ancs == L:  # ancillas at every site
         for i in range(L-1):  # sum over bonds
             tnn[3*i] = -0.5  # hopping in main chain
@@ -371,6 +445,9 @@ def init_wall_state(ancs, L):
         product_state = [1] * (L//2+1) + [0] * (L//2+1)
     if ancs == 2:
         product_state = [1] * (L//2+1) + [0] + [0] + [1] + [0] * (L//2)
+    if ancs == L//2:
+        product_state = ([1] + [1] + [0] + [1]) * (L//4) \
+            + ([0] + [1] + [0] + [0]) * (L//4)
     if ancs == L:
         product_state = ([1] + [1] + [0]) * (L//2) + ([0] + [1] + [0]) * (L//2)
 
@@ -386,6 +463,9 @@ def init_Vn_dmrg(Vn_dmrg, ancs, L):
     if ancs == 2:
         Vn_dmrg[L//2 - 1] = 0.
         Vn_dmrg[L//2 + 2] = 0.
+    if ancs == L//2:
+        for i in range(L//2):
+            Vn_dmrg[4*i] = 0.
     if ancs == L:
         for i in range(L):
             Vn_dmrg[3*i] = 0.
@@ -401,6 +481,8 @@ def define_output_dir(ancs, init_cond):
         save_dir = save_dir + 'SINGLE_'
     if ancs == 2:
         save_dir = save_dir + 'DOUBLE_'
+    if ancs == L//2:
+        save_dir = save_dir + 'HALF_'
     if ancs == L:
         save_dir = save_dir + 'MANY_'
 
@@ -422,6 +504,11 @@ def find_mainchain_density(psi, ancs, L):
     if ancs == 2:
         mainchain = np.concatenate((np.append(dens[0:L//2],
                                     dens[L//2 + 2]), dens[L//2 + 5:]))
+    if ancs == L//2:
+        mainchain = np.zeros(L)
+        for j in range(L//2):
+            mainchain[2*j] = dens[4*j]
+            mainchain[2*j + 1] = dens[4*j + 3]
     if ancs == L:
         mainchain = np.zeros(L)
         for j in range(L):
@@ -510,7 +597,7 @@ if __name__ == "__main__":
     # bond dimension (numerical convergence parameter)
     chi = int(arg_list[5])
 
-    # number of ancillas, 1, 2, L are supported
+    # number of ancillas, 1, 2, L//2, L are supported
     ancs = int(arg_list[6])
 
     # initial condition: choose 'init_gs' or 'init_wall'
