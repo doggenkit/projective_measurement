@@ -104,6 +104,10 @@ def hcb_dynamics(V, meas_str, L, ms, chi, ancs, init_cond):
     assert (init_cond == 'init_gs' or init_cond == 'init_wall'), \
         f'expected initial condition init_gs or init_wall, got {init_cond}'
 
+    ################
+    born_rule = True   # stochastic measurements
+    ################
+
     # define time window for dynamics
     delta_t = 0.05
     if ancs == L//2 or ancs == L:
@@ -602,9 +606,5 @@ if __name__ == "__main__":
 
     # initial condition: choose 'init_gs' or 'init_wall'
     init_cond = str(arg_list[7])
-
-    ################
-    born_rule = True   # stochastic measurements
-    ################
 
     hcb_dynamics(V, meas_str, L, ms, chi, ancs, init_cond)
