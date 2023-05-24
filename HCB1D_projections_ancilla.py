@@ -531,7 +531,7 @@ def quench_func(current_time, j, psi, born_rule, Ltot):
         meas = np.random.rand()
         meas_sign = np.random.rand()
         if meas < prob:
-            if born_rule and current_time > 0.01:
+            if born_rule and current_time > 0.1:
                 # Born rule: stochastic measurement
                 mu_array[j] = 3.e8*np.sign(rnd_array[j] - meas_sign)
             else:
