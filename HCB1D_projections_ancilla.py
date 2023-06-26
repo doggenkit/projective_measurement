@@ -83,7 +83,7 @@ hcb_dynamics(V=-0.25, meas_str=5.0, L=20, ms=4, chi=256,
         1 : the ancilla is attached to the L/2'th site (1..L)
         2 : the ancillas are attached to the L/2'th and L/2+1'th sites
         L//2 : there is an ancilla attached to every other site,
-               starting from the first site
+               starting from the first site (WARNING: experimental)
         L : there is an ancilla attached to every site
 
     init_cond : determine the initial condition. Valid choices:
